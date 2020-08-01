@@ -304,10 +304,8 @@ extern Bool		sunNoGX;
 
 /* sunKeyMap.c */
 extern KeySymsRec	sunKeySyms[];
-extern const SunModmapRec *sunModMaps[];
 extern const int	sunMaxLayout;
 extern KeySym		*sunType4KeyMaps[];
-extern const SunModmapRec *sunType4ModMaps[];
 
 /* sunKbd.c */
 extern long		sunAutoRepeatInitiate;
@@ -359,8 +357,6 @@ extern Firm_event* sunKbdGetEvents(int, Bool, int *, Bool *);
 extern void sunKbdEnqueueEvent(DeviceIntPtr, Firm_event *);
 extern int sunKbdProc(DeviceIntPtr, int);
 extern void sunKbdWait(void);
-void sunBlockHandler(int, void *, void *, void *);
-void sunWakeupHandler(int, void *, unsigned long, void *);
 
 /* sunMouse.c */
 extern Firm_event* sunMouseGetEvents(int, Bool, int *, Bool *);

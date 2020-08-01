@@ -51,12 +51,23 @@ THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #include "xkbsrv.h"
 #include "xkbstr.h"
 
+#ifdef __sun
 #define SUN_LED_MASK	0x0f
+#else
+#define SUN_LED_MASK	0x07
+#endif
 #define MIN_KEYCODE	7	/* necessary to avoid the mouse buttons */
 #define MAX_KEYCODE	255	/* limited by the protocol */
+#define NUM_KEYCODES	(MAX_KEYCODE - MIN_KEYCODE + 1)
 #ifndef KB_SUN4
 #define KB_SUN4		4
 #endif
+
+#define Meta_Mask	Mod1Mask
+#define Mode_switch_Mask Mod2Mask
+#define Alt_Mask	Mod3Mask
+#define Num_Lock_Mask	Mod4Mask
+#define ScrollLockMask	Mod5Mask
 
 #define tvminus(tv, tv1, tv2)   /* tv = tv1 - tv2 */ \
 		if ((tv1).tv_usec < (tv2).tv_usec) { \
@@ -75,6 +86,7 @@ THE USE OR PERFORMANCE OF THIS SOFTWARE.
 		}
 
 static void sunKbdHandlerNotify(int, int, void *);
+static void sunInitModMap(const KeySymsRec *, CARD8 *);
 static void SwapLKeys(KeySymsRec *);
 static void SetLights(KeybdCtrl *, int);
 static KeyCode LookupKeyCode(KeySym, XkbDescPtr, KeySymsPtr);
@@ -144,6 +156,7 @@ SetLights(KeybdCtrl* ctrl, int fd)
 #ifdef KIOCSLED
     static unsigned char led_tab[16] = {
 	0,
+#ifdef __sun
 	LED_NUM_LOCK,
 	LED_SCROLL_LOCK,
 	LED_SCROLL_LOCK | LED_NUM_LOCK,
@@ -159,8 +172,25 @@ SetLights(KeybdCtrl* ctrl, int fd)
 	LED_CAPS_LOCK | LED_COMPOSE | LED_NUM_LOCK,
 	LED_CAPS_LOCK | LED_COMPOSE | LED_SCROLL_LOCK,
 	LED_CAPS_LOCK | LED_COMPOSE | LED_SCROLL_LOCK | LED_NUM_LOCK
+#else
+	LED_CAPS_LOCK,
+	LED_NUM_LOCK,
+	LED_NUM_LOCK | LED_CAPS_LOCK,
+	LED_SCROLL_LOCK,
+	LED_SCROLL_LOCK | LED_CAPS_LOCK,
+	LED_SCROLL_LOCK | LED_NUM_LOCK,
+	LED_SCROLL_LOCK | LED_NUM_LOCK | LED_CAPS_LOCK,
+	LED_COMPOSE,
+	LED_COMPOSE | LED_CAPS_LOCK,
+	LED_COMPOSE | LED_NUM_LOCK,
+	LED_COMPOSE | LED_NUM_LOCK | LED_CAPS_LOCK,
+	LED_COMPOSE | LED_SCROLL_LOCK,
+	LED_COMPOSE | LED_SCROLL_LOCK | LED_CAPS_LOCK,
+	LED_COMPOSE | LED_SCROLL_LOCK | LED_NUM_LOCK,
+	LED_COMPOSE | LED_SCROLL_LOCK | LED_NUM_LOCK | LED_CAPS_LOCK,
+#endif
     };
-    if (ioctl (fd, KIOCSLED, (caddr_t)&led_tab[ctrl->leds & 0x0f]) == -1)
+    if (ioctl (fd, KIOCSLED, (caddr_t)&led_tab[ctrl->leds & SUN_LED_MASK]) == -1)
 	ErrorF("Failed to set keyboard lights");
 #endif
 }
@@ -223,10 +253,17 @@ DDXRingBell(int volume, int pitch, int duration)
 }
 
 
+#ifdef __sun
 #define XLED_NUM_LOCK    0x1
 #define XLED_COMPOSE     0x4
 #define XLED_SCROLL_LOCK 0x2
 #define XLED_CAPS_LOCK   0x8
+#else
+#define XLED_NUM_LOCK    0x2
+#define XLED_COMPOSE     0x8
+#define XLED_SCROLL_LOCK 0x4
+#define XLED_CAPS_LOCK   0x1
+#endif
 
 static KeyCode
 LookupKeyCode(KeySym keysym, XkbDescPtr xkb, KeySymsPtr syms)
@@ -324,7 +361,7 @@ DoLEDs(
 	    pseudoKey(device, FALSE,
 		LookupKeyCode(SunXK_Compose, xkb, syms));
 
-    pPriv->leds = ctrl->leds & 0x0f;
+    pPriv->leds = ctrl->leds & SUN_LED_MASK;
     SetLights (ctrl, pPriv->fd);
     free(syms->map);
     free(syms);
@@ -359,7 +396,7 @@ sunKbdCtrl(DeviceIntPtr device, KeybdCtrl* ctrl)
     	if (ioctl (pPriv->fd, KIOCCMD, &kbdClickCmd) == -1)
  	    ErrorF("Failed to set keyclick");
     }
-    if ((pPriv->type == KB_SUN4) && (pPriv->leds != (ctrl->leds & 0x0f)))
+    if ((pPriv->type == KB_SUN4) && (pPriv->leds != (ctrl->leds & SUN_LED_MASK)))
 	DoLEDs(device, ctrl, pPriv);
 }
 
@@ -555,8 +592,8 @@ sunInitKbdNames(XkbRMLVOSet *rmlvo, sunKbdPrivPtr pKbd)
     }
 #else
     rmlvo->rules = "base";
-    rmlvo->model = NULL;
-    rmlvo->layout = NULL;
+    rmlvo->model = "empty";
+    rmlvo->layout = "empty";
     rmlvo->variant = NULL;
     rmlvo->options = NULL;
 #endif
@@ -576,13 +613,12 @@ sunInitKbdNames(XkbRMLVOSet *rmlvo, sunKbdPrivPtr pKbd)
 int
 sunKbdProc(DeviceIntPtr device, int what)
 {
-    int i;
     DevicePtr pKeyboard = (DevicePtr) device;
     sunKbdPrivPtr pPriv;
     KeybdCtrl*	ctrl = &device->kbdfeed->ctrl;
     XkbRMLVOSet rmlvo;
+    CARD8 workingModMap[MAP_LENGTH];
 
-    static CARD8 *workingModMap = NULL;
     static KeySymsRec *workingKeySyms;
 
     switch (what) {
@@ -604,14 +640,8 @@ sunKbdProc(DeviceIntPtr device, int what)
 	    }
 	    if (workingKeySyms->maxKeyCode > MAX_KEYCODE)
 		workingKeySyms->maxKeyCode = MAX_KEYCODE;
-	}
 
-	if (!workingModMap) {
-	    workingModMap = malloc(MAP_LENGTH);
-	    (void) memset(workingModMap, 0, MAP_LENGTH);
-	    for(i=0; sunModMaps[sunKbdPriv.type][i].key != 0; i++)
-		workingModMap[sunModMaps[sunKbdPriv.type][i].key + MIN_KEYCODE] =
-		sunModMaps[sunKbdPriv.type][i].modifiers;
+	    sunInitModMap(workingKeySyms, workingModMap);
 	}
 
 	pKeyboard->devicePrivate = (void *)&sunKbdPriv;
@@ -619,9 +649,10 @@ sunKbdProc(DeviceIntPtr device, int what)
 
 	sunInitKbdNames(&rmlvo, pKeyboard->devicePrivate);
 #if 0 /* XXX needs more work for Xorg xkb */
-	InitKeyboardDeviceStruct(device, rmlvo,
+	InitKeyboardDeviceStruct(device, &rmlvo,
 				 sunBell, sunKbdCtrl);
 #else
+	XkbSetRulesDflts(&rmlvo);
 	InitKeyboardDeviceStruct(device, NULL,
 				 sunBell, sunKbdCtrl);
 	XkbApplyMappingChange(device, workingKeySyms,
@@ -665,6 +696,73 @@ sunKbdProc(DeviceIntPtr device, int what)
 	FatalError("Unknown keyboard operation\n");
     }
     return Success;
+}
+
+/*-------------------------------------------------------------------------
+ * sunInitModMap --
+ *	Initialize ModMap per specified KeyMap table.
+ *
+ * Results:
+ * 	None.
+ *
+ * Side Effects:
+ *	None.
+ *-----------------------------------------------------------------------*/
+static void
+sunInitModMap(
+    const KeySymsRec *KeySyms,	/* KeyMap data to set ModMap */
+    CARD8 *ModMap		/* ModMap to be initialized */
+)
+{
+    KeySym *k;
+    int i, min, max, width;
+    
+    for (i = 0; i < MAP_LENGTH; i++)
+        ModMap[i] = NoSymbol;
+
+    min   = KeySyms->minKeyCode;
+    max   = KeySyms->maxKeyCode;
+    width = KeySyms->mapWidth;
+    for (i = min, k = KeySyms->map; i < max; i++, k += width) {
+	switch (*k) {
+
+	case XK_Shift_L:
+	case XK_Shift_R:
+	    ModMap[i] = ShiftMask;
+	    break;
+
+	case XK_Control_L:
+	case XK_Control_R:
+	    ModMap[i] = ControlMask;
+	    break;
+
+	case XK_Caps_Lock:
+	    ModMap[i] = LockMask;
+	    break;
+
+	case XK_Alt_L:
+	case XK_Alt_R:
+	    ModMap[i] = Alt_Mask;
+	    break;
+
+	case XK_Num_Lock:
+	    ModMap[i] = Num_Lock_Mask;
+	    break;
+
+	case XK_Scroll_Lock:
+	    ModMap[i] = ScrollLockMask;
+	    break;
+
+	case XK_Meta_L:
+	case XK_Meta_R:
+	    ModMap[i] = Meta_Mask;
+	    break;
+
+	case SunXK_AltGraph:
+	    ModMap[i] = Mode_switch_Mask;
+	    break;
+        }
+    }
 }
 
 /*-
@@ -809,16 +907,4 @@ Bool
 LegalModifier(unsigned int key, DeviceIntPtr pDev)
 {
     return TRUE;
-}
-
-/*ARGSUSED*/
-void
-sunBlockHandler(int nscreen, void *pbdata, void *pTimeout, void *pReadmask)
-{
-}
-
-/*ARGSUSED*/
-void
-sunWakeupHandler(int nscreen, void *pbdata, unsigned long err, void *pReadmask)
-{
 }
