@@ -129,8 +129,10 @@ static void sunCfbGetImage(DrawablePtr, int,int, int, int, unsigned int, unsigne
 
 static Bool	sunDevsInited = FALSE;
 
-Bool sunAutoRepeatHandlersInstalled;	/* FALSE each time InitOutput called */
 Bool sunSwapLkeys = FALSE;
+Bool sunDebug = FALSE;
+char *sunDeviceList = NULL;
+Bool sunForceMono = FALSE;
 Bool sunFlipPixels = FALSE;
 Bool sunFbInfo = FALSE;
 Bool sunCG4Frob = FALSE;
@@ -306,6 +308,11 @@ OpenFrameBuffer(
 	    }
 	}
 	if (ret) {
+	    int verb = 1;
+
+	    if (sunFbInfo)
+		verb = -1;
+
 	    devFbUsed = TRUE;
 	    if (fbattr) {
 		if (fbattr->fbtype.fb_type >= XFBTYPE_LASTPLUSONE) {
@@ -324,16 +331,14 @@ OpenFrameBuffer(
 		    if (sunFbData[fbattr->emu_types[_i]].init) {
 			sunFbs[screen].info.fb_type = fbattr->emu_types[_i];
 			ret = TRUE;
-			if (sunFbInfo)
-			    ErrorF ("%s is emulating a %s\n", device,
-				sunFbData[fbattr->fbtype.fb_type].name);
+			LogMessageVerb(X_INFO, verb, "%s is emulating a %s\n",
+			    device, sunFbData[fbattr->fbtype.fb_type].name);
 			break;
 		    }
 		}
 	    }
-	    if (sunFbInfo)
-		ErrorF ("%s is really a %s\n", device,
-		    sunFbData[fbattr ? fbattr->fbtype.fb_type : sunFbs[screen].info.fb_type].name);
+	    LogMessageVerb(X_INFO, verb, "%s is really a %s\n", device,
+		sunFbData[fbattr ? fbattr->fbtype.fb_type : sunFbs[screen].info.fb_type].name);
 	}
     }
     if (!ret)
@@ -398,14 +403,9 @@ GetDeviceList(int argc, char **argv)
 {
     int		i;
     char	*envList = NULL;
-    char	*cmdList = NULL;
+    char	*cmdList = sunDeviceList;
     char	**deviceList = NULL;
 
-    for (i = 1; i < argc; i++)
-	if (strcmp (argv[i], "-dev") == 0 && i+1 < argc) {
-	    cmdList = argv[i + 1];
-	    break;
-	}
     if (!cmdList)
 	envList = getenv ("XDEVICE");
 
@@ -590,10 +590,8 @@ InitOutput(ScreenInfo *pScreenInfo, int argc, char **argv)
 	monitorResolution = 90;
     if (RunFromSigStopParent)
 	nonBlockConsole = 1;
-    for (i = 1; i < argc; i++) {
-	if (!strcmp(argv[i],"-debug"))
-	    nonBlockConsole = 0;
-    }
+    if (sunDebug)
+	nonBlockConsole = 0;
 
     /*
      *	Writes to /dev/console can block - causing an
